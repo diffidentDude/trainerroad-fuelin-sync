@@ -1,0 +1,9 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:example-vennacher
+DTSTART;VALUE=DATE:20261117
+SUMMARY:1:15 - Vennacher -2
+DESCRIPTION:TSS 89\, IF 0.85\, kJ(Cal) 979. Description: Vennacher -2 is 3x12-minute over-under intervals.
+END:VEVENT
+END:VCALENDAR

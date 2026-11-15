@@ -1,0 +1,202 @@
+{
+  "description": "Minimal workout request contracts used by this project, extracted from Fuelin API v1 documentation. No account responses or credentials.",
+  "source": "https://prod.fuelin.io/core/api-doc",
+  "components": {
+    "schemas": {
+      "InsertWorkout": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "recovery",
+              "strength",
+              "gym",
+              "weights",
+              "core",
+              "yoga",
+              "other",
+              "swim",
+              "run",
+              "bike",
+              "ride",
+              "triathlon",
+              "multisport",
+              "walk",
+              "ski",
+              "pre_race",
+              "rowing",
+              "hiit",
+              "afl",
+              "american_football",
+              "baseball",
+              "basketball",
+              "soccer",
+              "hockey",
+              "racket_sports",
+              "rugby",
+              "combat_sports",
+              "sailing",
+              "golf",
+              "ice_skating",
+              "handball",
+              "volleyball",
+              "boxing",
+              "tennis",
+              "tennis_doubles",
+              "netball",
+              "aquabike",
+              "aquathlon",
+              "duathlon",
+              "none",
+              "field_hockey",
+              "hyrox",
+              "crossfit",
+              "squash",
+              "pickleball",
+              "padel",
+              "skating"
+            ]
+          },
+          "intensity": {
+            "type": "integer",
+            "minimum": -32768,
+            "maximum": 32767
+          },
+          "startsAt": {
+            "type": "string"
+          },
+          "endsAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "intensity",
+          "startsAt",
+          "endsAt"
+        ],
+        "additionalProperties": false
+      },
+      "UpdateWorkout": {
+        "type": "object",
+        "properties": {
+          "startsAt": {
+            "type": "string"
+          },
+          "endsAt": {
+            "type": "string"
+          },
+          "stoplight": {
+            "type": "string",
+            "enum": [
+              "red",
+              "yellow",
+              "green",
+              "clear",
+              "blue",
+              "orange",
+              "skip",
+              "hidden"
+            ]
+          },
+          "intensity": {
+            "type": "integer",
+            "minimum": -32768,
+            "maximum": 32767
+          },
+          "legend": {
+            "type": "string"
+          },
+          "carbGoal": {
+            "type": "integer",
+            "minimum": -32768,
+            "maximum": 32767
+          },
+          "isCompleted": {
+            "type": "boolean"
+          },
+          "isLegendOverwritten": {
+            "type": "boolean"
+          },
+          "areCarbsOverwritten": {
+            "type": "boolean"
+          },
+          "dayId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "recovery",
+              "strength",
+              "gym",
+              "weights",
+              "core",
+              "yoga",
+              "other",
+              "swim",
+              "run",
+              "bike",
+              "ride",
+              "triathlon",
+              "multisport",
+              "walk",
+              "ski",
+              "pre_race",
+              "rowing",
+              "hiit",
+              "afl",
+              "american_football",
+              "baseball",
+              "basketball",
+              "soccer",
+              "hockey",
+              "racket_sports",
+              "rugby",
+              "combat_sports",
+              "sailing",
+              "golf",
+              "ice_skating",
+              "handball",
+              "volleyball",
+              "boxing",
+              "tennis",
+              "tennis_doubles",
+              "netball",
+              "aquabike",
+              "aquathlon",
+              "duathlon",
+              "none",
+              "field_hockey",
+              "hyrox",
+              "crossfit",
+              "squash",
+              "pickleball",
+              "padel",
+              "skating"
+            ]
+          },
+          "carbPerHour": {
+            "type": "integer",
+            "minimum": -32768,
+            "maximum": 32767
+          },
+          "estimatedDistance": {
+            "type": "number",
+            "minimum": -8388608,
+            "maximum": 8388607
+          },
+          "workoutId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workoutId"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}
