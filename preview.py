@@ -9,6 +9,7 @@ from datetime import date, datetime, time, timedelta, timezone as utc_timezone
 from pathlib import Path
 from urllib.request import urlopen
 from zoneinfo import ZoneInfo
+from config import load_config, DEFAULT_START_TIMES
 
 
 def unescape(value):
@@ -46,21 +47,19 @@ def start(event, timezone):
     return local.date(), local.isoformat()
 
 
-def scheduled_start(day, title, timestamp, timezone):
+def scheduled_start(day, title, timestamp, timezone, config=None):
     """Fill missing times using personal rules; retain explicit calendar times."""
     if timestamp is not None:
         return timestamp, "calendar"
-    is_gym = title.casefold().strip() == "full body buster" or re.search(
+    rules = config or {}
+    title_rule = rules.get("titles", {}).get(title, {})
+    is_gym = title_rule.get("type") in ("gym", "strength", "weights") or re.search(
         r"\b(gym|strength|weights)\b", title, re.I
     )
-    if is_gym:
-        hour, rule = 12, "gym"
-    elif day.weekday() >= 5:
-        # Sunday racing shares the weekend start time.
-        hour, rule = 7, "weekend"
-    else:
-        hour, rule = 6, "weekday"
-    return datetime.combine(day, time(hour), ZoneInfo(timezone)).isoformat(), rule
+    rule = "gym" if is_gym else "weekend" if day.weekday() >= 5 else "weekday"
+    times = {**DEFAULT_START_TIMES, **rules.get("start_times", {})}
+    clock = time.fromisoformat(times[rule])
+    return datetime.combine(day, clock, ZoneInfo(timezone)).isoformat(), rule
 
 
 def calendar_duration(event, timezone):
@@ -82,7 +81,7 @@ def calendar_duration(event, timezone):
     return None, None
 
 
-def preview(text, today, timezone, duration_overrides=None, future_only=False):
+def preview(text, today, timezone, duration_overrides=None, future_only=False, config=None):
     monday = today if future_only else today - timedelta(days=today.weekday())
     end = None if future_only else monday + timedelta(days=14)
     workouts, skipped, seen = [], [], set()
@@ -114,7 +113,7 @@ def preview(text, today, timezone, duration_overrides=None, future_only=False):
         if not uid or uid in seen:
             raise ValueError("Workout UID missing or duplicated; stable identity cannot be established")
         seen.add(uid)
-        timestamp, time_source = scheduled_start(day, workout_title, timestamp, timezone)
+        timestamp, time_source = scheduled_start(day, workout_title, timestamp, timezone, config)
         description = unescape(event.get("DESCRIPTION", ({}, ""))[1])
         metrics = {}
         for name, pattern in {
@@ -171,15 +170,17 @@ def read_calendar(file=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--file", type=Path, help="Local ICS export; otherwise use TRAINERROAD_CALENDAR_URL")
-    parser.add_argument("--timezone", default="Australia/Sydney")
+    parser.add_argument("--timezone", help="Override the configured timezone")
+    parser.add_argument("--config", type=Path, default=Path("config.json"))
     parser.add_argument("--today", type=date.fromisoformat, help="Override local date for reproducible previews")
     args = parser.parse_args()
     try:
-        zone = ZoneInfo(args.timezone)
+        rules = load_config(args.config)
+        timezone = args.timezone or rules.get("timezone", "UTC")
+        zone = ZoneInfo(timezone)
         text = read_calendar(args.file)
-        rules = json.loads(Path("activity-rules.json").read_text()) if Path("activity-rules.json").exists() else {}
         overrides = {title: rule["duration_minutes"] for title, rule in rules.get("titles", {}).items() if "duration_minutes" in rule}
-        result = preview(text, args.today or datetime.now(zone).date(), args.timezone, overrides)
+        result = preview(text, args.today or datetime.now(zone).date(), timezone, overrides, config=rules)
         print(json.dumps(result, indent=2))
     except Exception:
         # Network exception strings may contain the private subscription URL.

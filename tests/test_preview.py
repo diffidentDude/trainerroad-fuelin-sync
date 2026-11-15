@@ -57,18 +57,20 @@ class CalendarTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         read_calendar(path)
 
-    def test_personal_start_times(self):
+    def test_configurable_start_times(self):
+        config = {"start_times": {"weekday": "05:30", "weekend": "10:15", "gym": "14:00"},
+                  "titles": {"Session A": {"type": "strength"}}}
         cases = [
-            (date(2026, 11, 17), "Galena -2", "06:00:00+11:00", "weekday"),
-            (date(2026, 11, 21), "Indianhouse -2", "07:00:00+11:00", "weekend"),
-            (date(2026, 11, 22), "Race", "07:00:00+11:00", "weekend"),
-            (date(2026, 11, 17), "Full body buster", "12:00:00+11:00", "gym"),
-            (date(2026, 11, 22), "Gym", "12:00:00+11:00", "gym"),
-            (date(2026, 7, 14), "Ride", "06:00:00+10:00", "weekday"),
+            (date(2026, 11, 17), "Ride", "05:30:00+11:00", "weekday"),
+            (date(2026, 11, 21), "Ride", "10:15:00+11:00", "weekend"),
+            (date(2026, 11, 22), "Race", "10:15:00+11:00", "weekend"),
+            (date(2026, 11, 17), "Session A", "14:00:00+11:00", "gym"),
+            (date(2026, 11, 22), "Gym", "14:00:00+11:00", "gym"),
+            (date(2026, 7, 14), "Ride", "05:30:00+10:00", "weekday"),
         ]
         for day, title, expected, rule in cases:
             with self.subTest(day=day, title=title):
-                timestamp, source = scheduled_start(day, title, None, "Australia/Sydney")
+                timestamp, source = scheduled_start(day, title, None, "Australia/Sydney", config)
                 self.assertEqual(timestamp, f"{day}T{expected}")
                 self.assertEqual(source, rule)
 
@@ -85,7 +87,7 @@ class CalendarTests(unittest.TestCase):
         result = preview(self.sample, date(2026, 11, 15), "Australia/Sydney")
         workout = result["workouts"][0]
         self.assertEqual(workout["duration_minutes"], 75)
-        self.assertEqual(workout["start_time"], "2026-11-17T06:00:00+11:00")
+        self.assertEqual(workout["start_time"], "2026-11-17T09:00:00+11:00")
         self.assertEqual(workout["tss"], 89)
         self.assertEqual(workout["intensity_factor"], 0.85)
         self.assertEqual(workout["energy_kj"], 979)

@@ -1,0 +1,15 @@
+{
+  "timezone": "UTC",
+  "start_times": {
+    "weekday": "09:00",
+    "weekend": "09:00",
+    "gym": "09:00"
+  },
+  "rpe": {
+    "gym": 1,
+    "race": 5
+  },
+  "titles": {},
+  "workouts": {},
+  "annotations": []
+}

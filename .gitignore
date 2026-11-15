@@ -22,3 +22,6 @@ sync-state.sqlite3*
 htmlcov/
 .pytest_cache/
 /fuelin-v1-swagger.json
+/config.json
+/config.local.json
+/activity-rules.json

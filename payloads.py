@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from config import load_config
 
 
 def payload(workout, settings, allowed_types, zone=None):
@@ -42,7 +43,7 @@ def classify(workout, rules):
     """Translate TR IF using the personal scale; retain gym and no-IF race defaults."""
     title = workout["title"]
     summary = re.split(r"\bGoals\s*:", workout.get("description", ""), maxsplit=1, flags=re.I)[0]
-    if title.casefold().strip() == "full body buster" or re.search(r"\b(gym|strength|weights)\b", title, re.I):
+    if re.search(r"\b(gym|strength|weights)\b", title, re.I):
         return {"type": "gym", "intensity": rules.get("gym", 1)}, "gym"
     cycling = re.search(r"\b(FTP|cycling|riding|bike|ride)\b", title + " " + summary, re.I)
     settings = {"type": "bike"} if cycling else {}
@@ -83,10 +84,10 @@ def build_plan(preview, config, schema):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--preview", type=Path, default=Path("preview.json"))
-    parser.add_argument("--config", type=Path, default=Path("activity-rules.json"))
+    parser.add_argument("--config", type=Path, default=Path("config.json"))
     parser.add_argument("--schema", type=Path, default=Path("fuelin-schema.json"))
     args = parser.parse_args()
-    plan = build_plan(json.loads(args.preview.read_text()), json.loads(args.config.read_text()),
+    plan = build_plan(json.loads(args.preview.read_text()), load_config(args.config),
                       json.loads(args.schema.read_text()))
     print(json.dumps(plan, indent=2))
 

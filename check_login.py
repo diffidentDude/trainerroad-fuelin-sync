@@ -164,7 +164,7 @@ def verify_bearer(opener, token, email, user_id=None):
             print("Bearer profile check: response did not match your account (body hidden).")
             return False
         print("Bearer profile check: matching account retrieved.")
-        zone = ZoneInfo(user.get("timezone") or "Australia/Sydney")
+        zone = ZoneInfo(user.get("timezone") or "UTC")
         day = datetime.now(zone).date().isoformat()
         workouts = read(f"/api/v1/users/{quote(user['id'], safe='')}/days/{day}/workouts")
         if not isinstance(workouts, list):
@@ -192,7 +192,7 @@ def main():
     try:
         client = FuelinClient()
         user = client.login(refresh=args.refresh)
-        zone = ZoneInfo(user.get("timezone") or "Australia/Sydney")
+        zone = ZoneInfo(user.get("timezone") or "UTC")
         day = datetime.now(zone).date().isoformat()
         workouts = client.request("GET", f"/api/v1/users/{client.user_id}/days/{day}/workouts")
         if not isinstance(workouts, list):

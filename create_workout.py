@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 from check_login import NoRedirect, session_user_id, token_user_id
 from payloads import build_plan
+from config import load_config, ConfigError
 from auth_store import KeychainStore, StorageError
 
 
@@ -96,7 +97,7 @@ def activity_family(kind):
     return kind
 
 
-def same_workout(existing, body, zone=ZoneInfo("Australia/Sydney")):
+def same_workout(existing, body, zone=ZoneInfo("UTC")):
     try:
         return (activity_family(existing.get("type")) == activity_family(body["type"]) and existing.get("intensity") == body["intensity"]
                 and all(workout_instant(existing[key], zone) == workout_instant(body[key], zone) for key in ("startsAt", "endsAt")))
@@ -104,7 +105,7 @@ def same_workout(existing, body, zone=ZoneInfo("Australia/Sydney")):
         return False
 
 
-def conflicting_workout(existing, body, zone=ZoneInfo("Australia/Sydney")):
+def conflicting_workout(existing, body, zone=ZoneInfo("UTC")):
     """Treat bike/ride as aliases; a possible manual match must stop creation."""
     if activity_family(existing.get("type")) != activity_family(body["type"]):
         return False
@@ -167,7 +168,7 @@ def comparison_details(existing, body, zone):
     return details
 
 
-def reconcile_pending(client, entry, database, zone=ZoneInfo("Australia/Sydney")):
+def reconcile_pending(client, entry, database, zone=ZoneInfo("UTC")):
     """Recover a pending create using GET only; never repeat a POST."""
     if not Path(database).exists():
         raise SyncError("No local state exists to reconcile")
@@ -205,7 +206,7 @@ def reconcile_pending(client, entry, database, zone=ZoneInfo("Australia/Sydney")
         return uid
 
 
-def create_once(client, entry, database, zone=ZoneInfo("Australia/Sydney"), existing=None):
+def create_once(client, entry, database, zone=ZoneInfo("UTC"), existing=None):
     """Read once (or use weekly snapshot), reserve, POST once, record submission."""
     descriptor = os.open(database, os.O_CREAT | os.O_WRONLY, 0o600)
     os.close(descriptor)
@@ -245,6 +246,7 @@ def create_once(client, entry, database, zone=ZoneInfo("Australia/Sydney"), exis
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, default=Path("config.json"))
     parser.add_argument("--date", required=True, help="Local workout date YYYY-MM-DD")
     parser.add_argument("--title", required=True, help="Exact TrainerRoad workout title")
     mode = parser.add_mutually_exclusive_group()
@@ -254,7 +256,7 @@ def main():
     args = parser.parse_args()
     try:
         preview = json.loads(Path("preview.json").read_text())
-        plan = build_plan(preview, json.loads(Path("activity-rules.json").read_text()), json.loads(Path("fuelin-schema.json").read_text()))
+        plan = build_plan(preview, load_config(args.config), json.loads(Path("fuelin-schema.json").read_text()))
         matches = [entry for entry in plan["entries"] if entry["date"] == args.date and entry["title"] == args.title]
         if len(matches) != 1 or matches[0]["status"] != "ready_for_review":
             raise SyncError("Select exactly one resolved workout from preview.json")
@@ -298,7 +300,7 @@ def main():
         return 0
     except Exception as error:
         # Network and response exceptions can contain secrets; never echo them.
-        if isinstance(error, (SyncError, StorageError)):
+        if isinstance(error, (SyncError, StorageError, ConfigError)):
             print(str(error))
         else:
             print("Request failed. No automatic retry was made.")

@@ -24,7 +24,7 @@ class PayloadTests(unittest.TestCase):
             self.assertEqual(reason, "intensity_factor")
 
     def test_gym_and_race_without_if(self):
-        self.assertEqual(classify({"title": "Full body buster"}, {})[0], {"type": "gym", "intensity": 1})
+        self.assertEqual(classify({"title": "Gym session"}, {})[0], {"type": "gym", "intensity": 1})
         self.assertEqual(classify({"title": "Bike race"}, {})[0], {"type": "bike", "intensity": 5})
         settings, _ = classify({"title": "Ride", "description": "Sweet Spot"}, {})
         self.assertNotIn("intensity", settings)

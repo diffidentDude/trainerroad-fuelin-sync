@@ -10,7 +10,15 @@ TrainerRoad is the source of truth. Workout length, start time, activity type an
 
 ## Setup
 
-Run commands from this project's directory. Get your private calendar subscription URL from [TrainerRoad calendar sync](https://www.trainerroad.com/profile/calendar-sync). In zsh, enter it without displaying it or putting the URL in shell history:
+Run commands from this project's directory. Create your local preferences:
+
+```sh
+cp config.example.json config.json
+```
+
+Edit `config.json`: set `timezone` to your Fuelin account's IANA timezone, and set `start_times.weekday`, `start_times.weekend` and `start_times.gym` using `HH:MM` (24-hour time). The published example uses neutral UTC/09:00 values. Your local config is ignored by Git. Use `--config path/to/file.json` to select another file; keep custom configs outside the repository or use the ignored `config.local.json` filename.
+
+Get your private calendar subscription URL from [TrainerRoad calendar sync](https://www.trainerroad.com/profile/calendar-sync). In zsh, enter it without displaying it or putting the URL in shell history:
 
 ```zsh
 read -rs 'TRAINERROAD_CALENDAR_URL?Paste calendar URL: '
@@ -33,15 +41,15 @@ python3 sync.py          # Preview; does not change Fuelin activities
 python3 sync.py --apply  # Create missing sessions and update existing matches
 ```
 
-No week parameter is needed. Optional filters include `--week current`, `--week next`, or `--week YYYY-MM-DD` (a Monday). Use `--file path/to/calendar.ics` for a local calendar export, or `--timezone Australia/Sydney` to set the timezone; it must match your Fuelin account.
+No week parameter is needed. Optional filters include `--week current`, `--week next`, or `--week YYYY-MM-DD` (a Monday). Use `--file path/to/calendar.ics` for a local calendar export, or `--timezone Europe/London` to override the configured timezone; it must match your Fuelin account.
 
 Manage saved authentication with `python3 auth.py status` or `python3 auth.py logout`. Logout removes the local token, not the server session.
 
 ## Workout rules
 
-- Default starts: weekdays **06:00**, weekends **07:00**, gym **12:00**. Explicit TrainerRoad times take precedence.
+- Missing calendar start times use your configured weekday, weekend or gym time. Explicit TrainerRoad times take precedence. Gym detection uses standard gym/strength/weights words or a title override with one of those activity types.
 - Cycling intensity: **IF × 5**, rounded to the nearest integer (halves up), capped at 1–5. Gym defaults to **1**; races without IF default to **5**. This is a chosen conversion, not a validated RPE equivalence.
-- Duration comes from the calendar title or structured ICS fields. `activity-rules.json` provides title-specific type/intensity overrides, duration fallbacks and recognised annotations. A duration fallback cannot detect a change absent from the feed.
+- Duration comes from the calendar title or structured ICS fields. `config.json` provides title-specific type/intensity overrides, duration fallbacks and recognised annotations. A duration fallback cannot detect a change absent from the feed.
 - Keep recurring strength sessions in TrainerRoad only; the sync creates individual Fuelin activities.
 
 ## State and limitations
@@ -50,7 +58,7 @@ Manage saved authentication with `python3 auth.py status` or `python3 auth.py lo
 
 This uses Fuelin's documented app endpoints; changes to their behaviour may require updates. Creation and login have been exercised live; PATCH updates have automated coverage but still need live validation.
 
-Calendar URLs, tokens, exports, previews and the database are private. Git ignores local exports, state, editor files and the original Swagger download. Credentials stay in Keychain. Only minimal request contracts are included in `fuelin-schema.json`.
+Calendar URLs, tokens, exports, previews and the database are private. Git ignores local config, exports, state, editor files and the original Swagger download. Credentials stay in Keychain. Only minimal request contracts are included in `fuelin-schema.json`.
 
 ## Development
 

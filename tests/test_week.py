@@ -54,7 +54,9 @@ class WeekTests(unittest.TestCase):
                 far_event = "BEGIN:VEVENT" + distant.split("BEGIN:VEVENT", 1)[1]
                 path.write_text(sample.replace("END:VCALENDAR", far_event))
                 state = str(Path(directory) / "state")
-                with patch("sys.argv", ["sync.py", "--file", str(path), "--apply"]), patch("sync_week.datetime") as clock, patch("sync_week.FuelinClient", return_value=self.client), patch("sync_week.load_records", return_value={}), patch("sync_week.execute_week", side_effect=lambda client, actions, database, zone: execute_week(client, actions, state, zone)), redirect_stdout(io.StringIO()) as output:
+                config_path = Path(directory) / "config.json"
+                config_path.write_text(json.dumps({"timezone": "Australia/Sydney"}))
+                with patch("sys.argv", ["sync.py", "--file", str(path), "--config", str(config_path), "--apply"]), patch("sync_week.datetime") as clock, patch("sync_week.FuelinClient", return_value=self.client), patch("sync_week.load_records", return_value={}), patch("sync_week.execute_week", side_effect=lambda client, actions, database, zone: execute_week(client, actions, state, zone)), redirect_stdout(io.StringIO()) as output:
                     clock.now.return_value = self.now
                     result = main()
                     self.assertEqual(result, 0, output.getvalue())

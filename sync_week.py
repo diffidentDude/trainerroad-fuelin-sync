@@ -15,6 +15,7 @@ from uuid import UUID
 from auth_store import StorageError
 from create_workout import FuelinClient, SyncError, activity_family, comparison_details, conflicting_workout, create_once, same_workout, workout_instant
 from payloads import build_plan
+from config import load_config, ConfigError
 from preview import preview, read_calendar
 
 
@@ -247,7 +248,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--week", help="Optional restriction: next, current, or Monday YYYY-MM-DD; default is all future workouts")
     parser.add_argument("--file", type=Path, help="Use an explicit ICS file instead of fetching the calendar URL")
-    parser.add_argument("--timezone", default="Australia/Sydney")
+    parser.add_argument("--timezone", help="Override the configured timezone")
+    parser.add_argument("--config", type=Path, default=Path("config.json"))
     parser.add_argument("--apply", action="store_true", help="Create missing sessions and update matching activities to TrainerRoad values")
     parser.add_argument("--keep-manual-gym", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -255,14 +257,15 @@ def main():
         print("--keep-manual-gym is obsolete: existing activities now follow TrainerRoad values.")
     database = "sync-state.sqlite3"
     try:
+        rules = load_config(args.config)
+        args.timezone = args.timezone or rules.get("timezone", "UTC")
         zone = ZoneInfo(args.timezone)
         now = datetime.now(zone)
         monday = week_start(args.week, now.date()) if args.week else now.date()
         if not args.file and not os.environ.get("TRAINERROAD_CALENDAR_URL"):
             raise SyncError("TRAINERROAD_CALENDAR_URL is not set in this terminal. Export it as described in README.md, or use --file with an ICS export")
-        rules = json.loads(Path("activity-rules.json").read_text())
         overrides = {title: rule["duration_minutes"] for title, rule in rules.get("titles", {}).items() if "duration_minutes" in rule}
-        source = preview(read_calendar(args.file), monday, args.timezone, overrides, future_only=not bool(args.week))
+        source = preview(read_calendar(args.file), monday, args.timezone, overrides, future_only=not bool(args.week), config=rules)
         sunday = monday + timedelta(days=6) if args.week else None
         if sunday is not None:
             source["workouts"] = [workout for workout in source["workouts"] if str(monday) <= workout["date"] <= str(sunday)]
@@ -325,7 +328,7 @@ def main():
         counts = execute_week(client, actions, database, zone)
         print(f"Sync run: {counts['submitted']} create requests submitted, {counts['updated']} update requests submitted, {counts['confirmed']} confirmed from initial read, {counts['previously_sent']} previously submitted, {counts['uncertain']} uncertain prior requests. No post-create reads or retries.")
         return 1 if counts["uncertain"] else 0
-    except (StorageError, SyncError) as error:
+    except (StorageError, SyncError, ConfigError) as error:
         print(str(error))
     except HTTPError as error:
         print(f"Fuelin request returned HTTP {error.code}; stopped without retrying writes.")
