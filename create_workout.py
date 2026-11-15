@@ -3,10 +3,7 @@ import argparse
 import getpass
 import http.cookiejar
 import json
-import os
 import re
-import sqlite3
-from contextlib import closing
 from datetime import datetime, time, timezone
 from pathlib import Path
 from urllib.parse import quote
@@ -168,80 +165,21 @@ def comparison_details(existing, body, zone):
     return details
 
 
-def reconcile_pending(client, entry, database, zone=ZoneInfo("UTC")):
-    """Recover a pending create using GET only; never repeat a POST."""
-    if not Path(database).exists():
-        raise SyncError("No local state exists to reconcile")
-    with closing(sqlite3.connect(database)) as db:
-        row = db.execute("SELECT date,body,status FROM workouts WHERE user_id=? AND source_uid=?",
-                         (client.user_id, entry["source_uid"])).fetchone()
-        if not row or row[2] not in ("pending", "submitted"):
-            raise SyncError("No pending creation exists for this source workout")
-        day, raw_body, _ = row
-        body = json.loads(raw_body)
-        route = f"/api/v1/users/{client.user_id}/days/{quote(day, safe='')}/workouts"
+def create_workout(client, entry, zone=ZoneInfo("UTC"), existing=None):
+    """Use the current snapshot, send one POST, and retain no local history."""
+    route = f"/api/v1/users/{client.user_id}/days/{quote(entry['date'], safe='')}/workouts"
+    if existing is None:
         existing = client.request("GET", route)
-        if not isinstance(existing, list):
-            raise SyncError("Unexpected workout list; request state retained")
-        matches = [workout for workout in existing if isinstance(workout, dict) and same_workout(workout, body, zone)]
-        if len(matches) != 1:
-            print(f"Pending request date: {day}; Fuelin activities returned: {len(existing)}.")
-            for index, workout in enumerate(existing, 1):
-                if isinstance(workout, dict):
-                    print(f"Existing activity {index}:")
-                    for line in comparison_details(workout, body, zone):
-                        print("  " + line)
-            raise SyncError(f"Found {len(matches)} exact matches for the pending request; state retained, no POST repeated")
-        try:
-            uid = str(UUID(matches[0]["id"]))
-        except (KeyError, TypeError, ValueError, AttributeError):
-            raise SyncError("Matching workout lacks a valid ID; pending state retained") from None
-        other = db.execute("SELECT source_uid FROM workouts WHERE user_id=? AND fuelin_id=? AND source_uid<>?",
-                           (client.user_id, uid, entry["source_uid"])).fetchone()
-        if other:
-            raise SyncError("Matching Fuelin workout is linked to another source; pending state retained")
-        db.execute("UPDATE workouts SET status='created',fuelin_id=? WHERE user_id=? AND source_uid=? AND status IN ('pending','submitted')",
-                   (uid, client.user_id, entry["source_uid"]))
-        db.commit()
-        return uid
-
-
-def create_once(client, entry, database, zone=ZoneInfo("UTC"), existing=None):
-    """Read once (or use weekly snapshot), reserve, POST once, record submission."""
-    descriptor = os.open(database, os.O_CREAT | os.O_WRONLY, 0o600)
-    os.close(descriptor)
-    with closing(sqlite3.connect(database)) as db:
-        db.execute("CREATE TABLE IF NOT EXISTS workouts (user_id TEXT, source_uid TEXT, date TEXT, body TEXT, status TEXT, fuelin_id TEXT, PRIMARY KEY(user_id, source_uid))")
-        row = db.execute("SELECT status FROM workouts WHERE user_id=? AND source_uid=?", (client.user_id, entry["source_uid"])).fetchone()
-        if row:
-            raise SyncError("This source workout is already recorded or pending; no POST attempted")
-        route = f"/api/v1/users/{client.user_id}/days/{quote(entry['date'], safe='')}/workouts"
-        if existing is None:
-            existing = client.request("GET", route)
-        if not isinstance(existing, list):
-            raise SyncError("Unexpected workout list; no POST attempted")
-        if any(same_workout(workout, entry["body"], zone) for workout in existing if isinstance(workout, dict)):
-            raise SyncError("An equivalent workout already exists in Fuelin; no POST attempted")
-        if any(conflicting_workout(workout, entry["body"], zone) for workout in existing if isinstance(workout, dict)):
-            raise SyncError("A same-type activity overlaps this workout or has unknown timing; possible manual duplicate. No POST attempted")
-        # Atomic unique reservation also stops concurrent attempts for the same source.
-        db.execute("INSERT INTO workouts VALUES (?, ?, ?, ?, 'pending', NULL)",
-                   (client.user_id, entry["source_uid"], entry["date"], json.dumps(entry["body"], sort_keys=True)))
-        db.commit()
-        result = client.request("POST", route, entry["body"])
-        if isinstance(result, dict) and (result.get("success") is False or
-                (type(result.get("status")) in (int, float) and result["status"] >= 400)):
-            raise SyncError("Fuelin reported an error in its create response; request record retained")
-        uid = None
-        if isinstance(result, dict) and isinstance(result.get("id"), str):
-            try:
-                uid = str(UUID(result["id"]))
-            except ValueError:
-                pass
-        db.execute("UPDATE workouts SET status='submitted',fuelin_id=? WHERE user_id=? AND source_uid=?",
-                   (uid, client.user_id, entry["source_uid"]))
-        db.commit()
-        return uid
+    if not isinstance(existing, list):
+        raise SyncError("Unexpected workout list; no POST attempted")
+    if any(same_workout(workout, entry["body"], zone) for workout in existing if isinstance(workout, dict)):
+        raise SyncError("An equivalent workout already exists in Fuelin; no POST attempted")
+    if any(conflicting_workout(workout, entry["body"], zone) for workout in existing if isinstance(workout, dict)):
+        raise SyncError("A same-type activity overlaps this workout or has unknown timing; no POST attempted")
+    result = client.request("POST", route, entry["body"])
+    if isinstance(result, dict) and (result.get("success") is False or (type(result.get("status")) in (int, float) and result["status"] >= 400)):
+        raise SyncError("Fuelin reported an error in its create response")
+    return result
 
 
 def main():
@@ -252,7 +190,6 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--apply", action="store_true")
     mode.add_argument("--check-existing", action="store_true", help="Log in and compare existing workouts without writing")
-    mode.add_argument("--reconcile", action="store_true", help="Resolve a pending create using reads; update local state only")
     args = parser.parse_args()
     try:
         preview = json.loads(Path("preview.json").read_text())
@@ -269,17 +206,13 @@ def main():
             raise SyncError("Only future workouts can be created")
         print(f"{entry['date']} {entry['title']}: {entry['body']['type']}, intensity {entry['body']['intensity']}")
         print(f"Start: {starts.astimezone(zone).isoformat()}; end: {workout_instant(entry['body']['endsAt'], zone).astimezone(zone).isoformat()}")
-        if not args.apply and not args.check_existing and not args.reconcile:
+        if not args.apply and not args.check_existing:
             print("Dry run. Use --apply to create this one workout.")
             return 0
         client = FuelinClient()
         user = client.login()
         if user.get("timezone") and user["timezone"] != plan["timezone"]:
             raise SyncError("Fuelin timezone differs from preview; resolve before writing")
-        if args.reconcile:
-            reconcile_pending(client, entry, "sync-state.sqlite3", zone)
-            print("Reconciled and verified the existing workout. Local record updated; no Fuelin activities were changed.")
-            return 0
         if args.check_existing:
             route = f"/api/v1/users/{client.user_id}/days/{entry['date']}/workouts"
             existing = client.request("GET", route)
@@ -293,9 +226,9 @@ def main():
                 print(f"Possible match {index}:")
                 for line in comparison_details(workout, entry["body"], zone):
                     print("  " + line)
-            print("Read-only check complete. No activities or sync records were changed.")
+            print("Read-only check complete. No activities were changed.")
             return 0
-        create_once(client, entry, "sync-state.sqlite3", zone)
+        create_workout(client, entry, zone)
         print("Create request submitted. No post-create reads were made. Check the session in Fuelin or on the next weekly run.")
         return 0
     except Exception as error:
@@ -304,7 +237,7 @@ def main():
             print(str(error))
         else:
             print("Request failed. No automatic retry was made.")
-        print("If a create request was sent, its local reservation prevents another POST. Keep sync-state.sqlite3.")
+        print("A failed request may still have reached Fuelin; check the app before rerunning.")
         return 1
 
 

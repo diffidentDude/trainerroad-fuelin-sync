@@ -6,7 +6,7 @@ Sync planned TrainerRoad workouts into Fuelin so its nutrition plan reflects you
 
 The script reads your TrainerRoad calendar feed, discovers which dates Fuelin currently allows you to plan, and reads the existing activities for those dates. It then creates missing workouts and updates uniquely matched activities to match TrainerRoad. Later dates are deferred until Fuelin opens them.
 
-TrainerRoad is the source of truth. Workout length, start time, activity type and intensity are synced. Requests are sent once, with no post-write polling. A local SQLite file tracks submissions and activity IDs to avoid duplicates; later runs can confirm submissions during their initial read.
+TrainerRoad is the source of truth. Workout length, start time, activity type and intensity are synced. Requests are sent once, with no post-write polling. There is no local workout database or submission history: matching uses only the Fuelin snapshot read at the start of each run.
 
 ## Setup
 
@@ -52,13 +52,18 @@ Manage saved authentication with `python3 auth.py status` or `python3 auth.py lo
 - Duration comes from the calendar title or structured ICS fields. `config.json` provides title-specific type/intensity overrides, duration fallbacks and recognised annotations. A duration fallback cannot detect a change absent from the feed.
 - Keep recurring strength sessions in TrainerRoad only; the sync creates individual Fuelin activities.
 
-## State and limitations
+## Limitations
 
-**Keep `sync-state.sqlite3`.** It contains private workout/account metadata and prevents duplicate submissions. Do not delete it to retry an uncertain request. Ambiguous matches, cross-date moves and completed or recurring Fuelin activities requiring changes are flagged for review. Deletions and automatic scheduling are not implemented. Fuelin may display generic workout names because its create endpoint does not accept a name.
+- **Rapid or concurrent runs can create duplicates.** Fuelin may take time to expose a submitted workout. If you run the sync three times before those writes become visible, each run may see the same empty state and submit the workout again. Wait until the activities appear in Fuelin before rerunning. The tool has no local history, idempotency guarantee, polling or write retries.
+- A timeout or failed request can still have reached Fuelin. Check the app before repeating a run; earlier requests in that run may already have succeeded.
+- Matching uses date, sport and times, not persistent TrainerRoad-to-Fuelin IDs. Ambiguous matches and completed or recurring activities requiring changes are flagged for review. Cross-date moves, or changing both sport and time, may leave an old activity unmatched; resolve those manually. Deletions and automatic scheduling are not implemented.
+- Fuelin may display generic workout names because its create endpoint does not accept a name.
+
+Legacy `sync-state.sqlite3` files are no longer read or written and can be deleted. Authentication tokens still persist in macOS Keychain; workout state does not.
 
 This uses Fuelin's documented app endpoints; changes to their behaviour may require updates. Creation and login have been exercised live; PATCH updates have automated coverage but still need live validation.
 
-Calendar URLs, tokens, exports, previews and the database are private. Git ignores local config, exports, state, editor files and the original Swagger download. Credentials stay in Keychain. Only minimal request contracts are included in `fuelin-schema.json`.
+Calendar URLs, tokens, exports and previews are private. Git ignores local config, exports, legacy database files, editor files and the original Swagger download. Credentials stay in Keychain. Only minimal request contracts are included in `fuelin-schema.json`.
 
 ## Development
 

@@ -2,9 +2,7 @@
 import argparse
 import json
 import os
-import sqlite3
 from collections import Counter
-from contextlib import closing
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.error import HTTPError
@@ -13,7 +11,7 @@ from zoneinfo import ZoneInfo
 from uuid import UUID
 
 from auth_store import StorageError
-from create_workout import FuelinClient, SyncError, activity_family, comparison_details, conflicting_workout, create_once, same_workout, workout_instant
+from create_workout import FuelinClient, SyncError, activity_family, comparison_details, conflicting_workout, create_workout, same_workout, workout_instant
 from payloads import build_plan
 from config import load_config, ConfigError
 from preview import preview, read_calendar
@@ -29,16 +27,6 @@ def week_start(selection, today):
     if result.weekday() != 0:
         raise SyncError("--week must be current, next, or a Monday YYYY-MM-DD")
     return result
-
-
-def load_records(database, user_id):
-    if not Path(database).exists():
-        return {}
-    with closing(sqlite3.connect(Path(database).resolve().as_uri() + "?mode=ro", uri=True)) as db:
-        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workouts'").fetchone():
-            raise SyncError("Local state database is missing the workouts table")
-        db.row_factory = sqlite3.Row
-        return {row["source_uid"]: dict(row) for row in db.execute("SELECT * FROM workouts WHERE user_id=?", (user_id,))}
 
 
 def available_dates(client, first, last, page_size=100):
@@ -69,7 +57,7 @@ def available_dates(client, first, last, page_size=100):
         offset += len(page)
 
 
-def plan_week(client, entries, records, zone, now, keep_manual_gym=False):
+def plan_week(client, entries, zone, now):
     """Read all relevant days before planning any writes."""
     days = sorted({entry["date"] for entry in entries})
     existing = {}
@@ -96,48 +84,31 @@ def plan_week(client, entries, records, zone, now, keep_manual_gym=False):
             raise SyncError("Unexpected Fuelin workout list; no sync writes attempted")
         existing[day] = values
     result, claimed = [], set()
-    owners = {record["fuelin_id"]: uid for uid, record in records.items() if record.get("fuelin_id")}
     for entry in entries:
         action, reason, candidate = "review", "", None
-        record = records.get(entry["source_uid"])
         body = entry.get("body")
         if entry["status"] != "ready_for_review":
             reason = entry.get("reason", "Unresolved workout")
         elif workout_instant(body["startsAt"], zone) <= now:
             action, reason = "past", "Already started; left unchanged"
-        elif record and record["date"] != entry["date"]:
-            reason = "Tracked workout moved dates; requires reconciliation"
-        elif record:
-            values = existing[entry["date"]]
-            if record.get("fuelin_id"):
-                matches = [value for value in values if value.get("id") == record["fuelin_id"]]
-            else:
-                saved = json.loads(record["body"])
-                matches = [value for value in values if same_workout(value, saved, zone)]
-                if not matches:
-                    matches = [value for value in values if same_workout(value, body, zone)]
-            if len(matches) == 1:
-                candidate = matches[0]
-                if same_workout(candidate, body, zone):
-                    action = "tracked" if record["status"] == "created" else "confirm"
-                    reason = "Already synced" if action == "tracked" else "Present in initial read; link local record"
-                elif record["status"] == "update_pending":
-                    action, reason = "uncertain", "Earlier update outcome unknown; no automatic write retry"
-                else:
-                    action, reason = "update", "Update the linked activity to match TrainerRoad"
-            elif len(matches) > 1:
-                reason = "Multiple matches for linked activity; requires review"
-            elif record["status"] in ("pending", "update_pending", "submitted"):
-                action = "submitted" if record["status"] == "submitted" else "uncertain"
-                reason = "Already sent; absent from initial read. Not resubmitting or blocking other sessions"
-            else:
-                reason = "Tracked workout is missing; requires review"
         else:
             values = existing[entry["date"]]
             ambiguous_family = False
             matches = [value for value in values if same_workout(value, body, zone)]
             if not matches:
                 matches = [value for value in values if conflicting_workout(value, body, zone)]
+            if not matches:
+                # A unique same-time session can be matched when the sport changes.
+                clock_matches = []
+                for value in values:
+                    try:
+                        if all(workout_instant(value[key], zone) == workout_instant(body[key], zone) for key in ("startsAt", "endsAt")):
+                            clock_matches.append(value)
+                    except (KeyError, TypeError, ValueError, AttributeError):
+                        pass
+                clock_sources = [source for source in entries if source["date"] == entry["date"] and source.get("body") and all(source["body"][key] == body[key] for key in ("startsAt", "endsAt"))]
+                if len(clock_sources) == 1:
+                    matches = clock_matches
             if not matches:
                 family_sources = [source for source in entries if source["date"] == entry["date"] and source.get("body") and activity_family(source["body"]["type"]) == activity_family(body["type"])]
                 # A single session of this sport on both sides can be matched even
@@ -150,7 +121,7 @@ def plan_week(client, entries, records, zone, now, keep_manual_gym=False):
             if len(matches) == 1:
                 candidate = matches[0]
                 if same_workout(candidate, body, zone):
-                    action, reason = "manual", "Existing activity matches; link it locally"
+                    action, reason = "matched", "Existing activity already matches"
                 else:
                     action, reason = "update", "Update the existing activity to match TrainerRoad"
             elif matches or ambiguous_family:
@@ -159,7 +130,7 @@ def plan_week(client, entries, records, zone, now, keep_manual_gym=False):
                 action, reason = "create", "Missing from Fuelin"
         if candidate is not None:
             identity = candidate.get("id")
-            if not identity or identity in claimed or (identity in owners and owners[identity] != entry["source_uid"]):
+            if not identity or identity in claimed:
                 action, reason = "review", "Existing activity is missing an ID or matches another source"
             else:
                 claimed.add(identity)
@@ -187,60 +158,36 @@ def plan_week(client, entries, records, zone, now, keep_manual_gym=False):
     return result
 
 
-def save_link(client, item, database, status):
-    uid = str(UUID(item["fuelin_id"]))
-    entry = item["entry"]
-    descriptor = os.open(database, os.O_CREAT | os.O_WRONLY, 0o600)
-    os.close(descriptor)
-    with closing(sqlite3.connect(database)) as db:
-        db.execute("CREATE TABLE IF NOT EXISTS workouts (user_id TEXT, source_uid TEXT, date TEXT, body TEXT, status TEXT, fuelin_id TEXT, PRIMARY KEY(user_id, source_uid))")
-        other = db.execute("SELECT source_uid FROM workouts WHERE user_id=? AND fuelin_id=? AND source_uid<>?", (client.user_id, uid, entry["source_uid"])).fetchone()
-        if other:
-            raise SyncError("Existing Fuelin ID is linked to another source; stopped")
-        db.execute("INSERT INTO workouts VALUES (?,?,?,?,?,?) ON CONFLICT(user_id,source_uid) DO UPDATE SET date=excluded.date,body=excluded.body,status=excluded.status,fuelin_id=excluded.fuelin_id",
-                   (client.user_id, entry["source_uid"], entry["date"], json.dumps(entry["body"], sort_keys=True), status, uid))
-        db.commit()
-    return uid
-
-
-def execute_week(client, actions, database, zone):
+def execute_week(client, actions, zone):
     if any(item["action"] == "review" for item in actions):
         raise SyncError("Resolve the review items first. No sync writes attempted")
-    # Validate every update/link target before the first mutation or request.
     for item in actions:
-        if item["action"] in ("update", "confirm", "manual"):
+        if item["action"] == "update":
             try:
                 UUID(item["fuelin_id"])
             except (KeyError, TypeError, ValueError, AttributeError):
                 raise SyncError("A matching Fuelin activity has no valid ID; no sync writes attempted") from None
-    counts = {"submitted": 0, "updated": 0, "confirmed": 0, "previously_sent": 0, "uncertain": 0}
+    counts = {"submitted": 0, "updated": 0, "matched": 0}
     for item in actions:
         entry = item["entry"]
-        if item["action"] in ("confirm", "manual"):
-            save_link(client, item, database, "created")
-            counts["confirmed"] += 1
+        if item["action"] == "matched":
+            counts["matched"] += 1
         elif item["action"] == "update":
             if workout_instant(entry["body"]["startsAt"], zone) <= datetime.now(zone):
                 raise SyncError("A workout has started since planning; stopped without updating it")
-            uid = save_link(client, item, database, "update_pending")
-            patch_body = {**entry["body"], "workoutId": uid}
+            uid = str(UUID(item["fuelin_id"]))
             route = f"/api/v1/users/{client.user_id}/days/{entry['date']}/workouts/{uid}"
-            response = client.request("PATCH", route, patch_body)
+            response = client.request("PATCH", route, {**entry["body"], "workoutId": uid})
             if isinstance(response, dict) and (response.get("success") is False or (type(response.get("status")) in (int, float) and response["status"] >= 400)):
-                raise SyncError("Fuelin reported an update error; request record retained")
-            save_link(client, item, database, "submitted")
+                raise SyncError("Fuelin reported an update error")
             counts["updated"] += 1
             print(f"Update submitted: {entry['date']} {entry['title']}")
         elif item["action"] == "create":
             if workout_instant(entry["body"]["startsAt"], zone) <= datetime.now(zone):
                 raise SyncError("A workout has started since planning; stopped without creating it")
-            create_once(client, entry, database, zone, existing=item["snapshot"])
+            create_workout(client, entry, zone, existing=item["snapshot"])
             counts["submitted"] += 1
             print(f"Submitted: {entry['date']} {entry['title']}")
-        elif item["action"] == "submitted":
-            counts["previously_sent"] += 1
-        elif item["action"] == "uncertain":
-            counts["uncertain"] += 1
     return counts
 
 
@@ -255,7 +202,6 @@ def main():
     args = parser.parse_args()
     if args.keep_manual_gym:
         print("--keep-manual-gym is obsolete: existing activities now follow TrainerRoad values.")
-    database = "sync-state.sqlite3"
     try:
         rules = load_config(args.config)
         args.timezone = args.timezone or rules.get("timezone", "UTC")
@@ -288,7 +234,6 @@ def main():
         user = client.login()
         if user.get("timezone") and user["timezone"] != args.timezone:
             raise SyncError("Fuelin timezone differs from the calendar timezone")
-        source_uids = {entry["source_uid"] for entry in plan["entries"]}
         target_dates = sorted({entry["date"] for entry in plan["entries"]})
         open_dates = available_dates(client, target_dates[0], target_dates[-1])
         deferred = sum(entry["date"] not in open_dates for entry in plan["entries"])
@@ -306,12 +251,8 @@ def main():
         if not plan["entries"]:
             print("No workouts are eligible yet. Run again when Fuelin opens their dates.")
             return 0
-        records = load_records(database, client.user_id)
-        for uid, record in records.items():
-            if record["date"] in open_dates and uid not in source_uids:
-                print(f"NOTICE  {record['date']}: a locally tracked source UID is absent from recognised feed workouts; its Fuelin activity is left unchanged.")
         print(f"Reading Fuelin state for {len(set(entry['date'] for entry in plan['entries']))} training dates before sending any requests...")
-        actions = plan_week(client, plan["entries"], records, zone, now, args.keep_manual_gym)
+        actions = plan_week(client, plan["entries"], zone, now)
         for item in actions:
             entry = item["entry"]
             body = entry.get("body", {})
@@ -321,20 +262,20 @@ def main():
                 print("  " + line)
         print("Summary: " + ", ".join(f"{count} {action}" for action, count in sorted(Counter(item["action"] for item in actions).items())))
         if not args.apply:
-            print("Preview only: no Fuelin activities or sync records changed. Use --apply to create missing workouts.")
+            print("Preview only: no Fuelin activities changed. Use --apply to create missing workouts.")
             return 1 if any(item["action"] == "review" for item in actions) else 0
         if skipped:
             raise SyncError("Unrecognised calendar entries need review; no sync writes attempted")
-        counts = execute_week(client, actions, database, zone)
-        print(f"Sync run: {counts['submitted']} create requests submitted, {counts['updated']} update requests submitted, {counts['confirmed']} confirmed from initial read, {counts['previously_sent']} previously submitted, {counts['uncertain']} uncertain prior requests. No post-create reads or retries.")
-        return 1 if counts["uncertain"] else 0
+        counts = execute_week(client, actions, zone)
+        print(f"Sync run: {counts['submitted']} create requests submitted, {counts['updated']} update requests submitted, {counts['matched']} already matching. No post-write reads or retries.")
+        return 0
     except (StorageError, SyncError, ConfigError) as error:
         print(str(error))
     except HTTPError as error:
         print(f"Fuelin request returned HTTP {error.code}; stopped without retrying writes.")
     except Exception:
         print("Sync stopped. Check the calendar URL/file, connection and configuration. Private response details were not printed.")
-    print("Keep sync-state.sqlite3; any completed sessions remain recorded and uncertain creations stay pending.")
+    print("No automatic write retries. A failed request may still have reached Fuelin; check the app before rerunning.")
     return 1
 
 
