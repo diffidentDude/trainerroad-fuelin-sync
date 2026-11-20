@@ -1,9 +1,10 @@
 import json
+from copy import deepcopy
 import tempfile
 import unittest
 from pathlib import Path
 
-from config import ConfigError, load_config
+from config import ConfigError, load_config, DEFAULT_IF_RANGES, validate_if_ranges
 
 
 class ConfigTests(unittest.TestCase):
@@ -14,6 +15,22 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(rules["workouts"], {})
         self.assertEqual(set(rules["start_times"].values()), {"09:00"})
 
+    def test_example_shows_all_five_bands(self):
+        self.assertEqual(load_config("config.example.json")["rpe"]["if_ranges"], DEFAULT_IF_RANGES)
+
+    def test_incomplete_overlapping_unordered_or_unbounded_profiles_fail(self):
+        bad = [[], {}, DEFAULT_IF_RANGES[:-1]]
+        for index, field, value in [(0, "max_if", -.1), (0, "max_if", True),
+                                    (1, "max_if", .3), (1, "max_if", float('nan')),
+                                    (2, "max_if", None), (3, "max_if", float('inf')),
+                                    (4, "max_if", 1.2), (2, "level", 4), (0, "level", True)]:
+            bands = deepcopy(DEFAULT_IF_RANGES)
+            bands[index][field] = value
+            bad.append(bands)
+        for bands in bad:
+            with self.subTest(bands=bands), self.assertRaises(ConfigError):
+                validate_if_ranges(bands)
+
     def test_missing_config_explains_setup(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ConfigError, "copy config.example.json"):
@@ -22,12 +39,8 @@ class ConfigTests(unittest.TestCase):
     def test_invalid_times_timezone_and_rule_shapes_fail_early(self):
         invalid = [
             {"rest_day_action": "delete_everything"},
-            {"rpe": {"if_level_3_max": 75}},
-            {"rpe": {"if_level_3_max": True}},
-            {"rpe": {"if_level_3_max": .49}},
-            {"rpe": {"if_level_3_max": .9}},
-            {"rpe": {"if_level_3_max": "0.75"}},
-            {"rpe": {"if_level_3_max": float("nan")}},
+            {"rpe": {"if_level_3_max": .75}},
+            {"rpe": {"if_ranges": []}},
             {"start_times": {"weekday": "25:00"}},
             {"start_times": {"weekday": "6:00"}},
             {"start_times": {"weekdays": "09:00"}},

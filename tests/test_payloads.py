@@ -6,28 +6,26 @@ from payloads import build_plan, payload, classify, intensity_from_if
 
 
 class PayloadTests(unittest.TestCase):
-    def test_configured_level_three_ceiling_is_inclusive(self):
-        for value, expected in [(.49, 2), (.5, 3), (.7, 3), (.75, 3),
-                                (.750001, 4), (.85, 4), (.899999, 4), (.9, 5), (1, 5)]:
-            with self.subTest(value=value):
-                self.assertEqual(intensity_from_if(value, level_3_max=.75), expected)
-
-    def test_level_three_ceiling_reaches_planned_payload(self):
-        schema = json.loads(Path("fuelin-schema.json").read_text())
-        workout = {**self.workout, "intensity_factor": .75}
-        result = build_plan({"timezone": "UTC", "workouts": [workout]},
-                            {"rpe": {"if_level_3_max": .75}}, schema)
-        self.assertEqual(result["entries"][0]["body"]["intensity"], 3)
-
-    def test_linear_if_mapping(self):
-        for value, expected in [(0, 1), (.2, 1), (.4, 2), (.6, 3), (.69, 3),
-                                (.7, 4), (.71, 4), (.8, 4), (.85, 4), (.86, 4),
-                                (.9, 5), (1, 5), (1.2, 5)]:
+    def test_default_if_bands_include_their_upper_boundary(self):
+        for value, expected in [(0, 1), (.3, 1), (.300001, 2), (.5, 2), (.500001, 3),
+                                (.7, 3), (.75, 3), (.750001, 4), (.9, 4), (.900001, 5), (1, 5), (1.2, 5)]:
             with self.subTest(value=value):
                 self.assertEqual(intensity_from_if(value), expected)
         for value in [True, -1, float('nan'), float('inf'), "0.8", None]:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 intensity_from_if(value)
+
+    def test_custom_bands_reach_planned_payload_and_overrides_still_win(self):
+        bands = [{"level": level, "max_if": upper} for level, upper in enumerate([.4, .6, .8, 1.0, None], 1)]
+        for value, expected in [(.35, 1), (.55, 2), (.75, 3), (.95, 4), (1.1, 5)]:
+            self.assertEqual(intensity_from_if(value, bands), expected)
+        schema = json.loads(Path("fuelin-schema.json").read_text())
+        workout = {**self.workout, "intensity_factor": .8}
+        preview = {"timezone": "UTC", "workouts": [workout]}
+        config = {"rpe": {"if_ranges": bands}}
+        self.assertEqual(build_plan(preview, config, schema)["entries"][0]["body"]["intensity"], 3)
+        config["workouts"] = {"test": {"intensity": 5}}
+        self.assertEqual(build_plan(preview, config, schema)["entries"][0]["body"]["intensity"], 5)
 
     def test_if_takes_precedence_over_description_and_race_default(self):
         for title in ["Ride", "Bike race"]:

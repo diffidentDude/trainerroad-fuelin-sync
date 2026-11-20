@@ -12,11 +12,32 @@ class ConfigError(ValueError):
     pass
 
 
-def validate_if_level_3_max(value):
-    if (type(value) not in (int, float) or not math.isfinite(value)
-            or not 0.5 <= value < 0.9):
-        raise ConfigError("rpe.if_level_3_max must be a decimal IF from 0.50 up to (but not including) 0.90")
-    return value
+DEFAULT_IF_RANGES = [
+    {"level": 1, "max_if": 0.30},
+    {"level": 2, "max_if": 0.50},
+    {"level": 3, "max_if": 0.75},
+    {"level": 4, "max_if": 0.90},
+    {"level": 5, "max_if": None},
+]
+
+
+def validate_if_ranges(ranges):
+    if not isinstance(ranges, list) or len(ranges) != 5:
+        raise ConfigError("rpe.if_ranges must contain five bands, ordered from level 1 to 5")
+    previous = -1
+    for level, band in enumerate(ranges, 1):
+        if (not isinstance(band, dict) or set(band) != {"level", "max_if"}
+                or type(band["level"]) is not int or band["level"] != level):
+            raise ConfigError("Each IF band must have level and max_if, in level order 1–5")
+        upper = band["max_if"]
+        if level == 5:
+            if upper is not None:
+                raise ConfigError("Level 5 max_if must be null to cover all higher IF values")
+        elif type(upper) not in (int, float) or not math.isfinite(upper) or upper < 0 or upper <= previous:
+            raise ConfigError("IF ceilings must be finite, non-negative and strictly increasing")
+        else:
+            previous = upper
+    return ranges
 
 
 def load_config(path=Path("config.json")):
@@ -47,7 +68,9 @@ def load_config(path=Path("config.json")):
         if not isinstance(rules.get(key, {}), dict):
             raise ConfigError(f"{key} must be an object")
     if "if_level_3_max" in rules.get("rpe", {}):
-        validate_if_level_3_max(rules["rpe"]["if_level_3_max"])
+        raise ConfigError("rpe.if_level_3_max was removed; configure all levels with rpe.if_ranges instead")
+    if "if_ranges" in rules.get("rpe", {}):
+        validate_if_ranges(rules["rpe"]["if_ranges"])
     for key in ("titles", "workouts"):
         if any(not isinstance(value, dict) for value in rules.get(key, {}).values()):
             raise ConfigError(f"Each {key} entry must be an object")

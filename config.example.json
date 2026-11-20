@@ -7,7 +7,29 @@
   },
   "rpe": {
     "gym": 1,
-    "race": 5
+    "race": 5,
+    "if_ranges": [
+      {
+        "level": 1,
+        "max_if": 0.3
+      },
+      {
+        "level": 2,
+        "max_if": 0.5
+      },
+      {
+        "level": 3,
+        "max_if": 0.75
+      },
+      {
+        "level": 4,
+        "max_if": 0.9
+      },
+      {
+        "level": 5,
+        "max_if": null
+      }
+    ]
   },
   "titles": {},
   "workouts": {},

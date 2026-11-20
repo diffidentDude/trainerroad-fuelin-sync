@@ -4,10 +4,9 @@ import json
 import math
 import re
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from config import load_config, validate_if_level_3_max
+from config import load_config, DEFAULT_IF_RANGES, validate_if_ranges
 
 
 def payload(workout, settings, allowed_types, zone=None):
@@ -31,17 +30,15 @@ def payload(workout, settings, allowed_types, zone=None):
             "endsAt": ends.replace(tzinfo=None).isoformat()}
 
 
-def intensity_from_if(value, level_3_max=None):
-    """Linear scale with an optional inclusive ceiling for level 3."""
+def intensity_from_if(value, ranges=None):
+    """Use the first inclusive IF ceiling; the final band covers all higher IFs."""
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
         raise ValueError("IF must be a finite non-negative number")
-    if level_3_max is not None:
-        validate_if_level_3_max(level_3_max)
-        # Only adjust the boundary between 3 and 4; preserve levels 1, 2 and 5.
-        if 0.5 <= value < 0.9:
-            return 3 if value <= level_3_max else 4
-    scaled = (Decimal(str(value)) * 5).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-    return max(1, min(5, int(scaled)))
+    bands = validate_if_ranges(DEFAULT_IF_RANGES if ranges is None else ranges)
+    for band in bands:
+        if band["max_if"] is None or value <= band["max_if"]:
+            return band["level"]
+    raise ValueError("IF ranges do not cover the workout")
 
 
 def classify(workout, rules):
@@ -54,7 +51,7 @@ def classify(workout, rules):
     settings = {"type": "bike"} if cycling else {}
     if workout.get("intensity_factor") is not None:
         try:
-            return {**settings, "intensity": intensity_from_if(workout["intensity_factor"], rules.get("if_level_3_max"))}, "intensity_factor"
+            return {**settings, "intensity": intensity_from_if(workout["intensity_factor"], rules.get("if_ranges"))}, "intensity_factor"
         except ValueError:
             return settings, "invalid_intensity_factor"
     if re.search(r"\b(race|racing|criterium|crit)\b", title, re.I):
