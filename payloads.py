@@ -42,19 +42,39 @@ def intensity_from_if(value, ranges=None):
     raise ValueError("IF ranges do not cover the workout")
 
 
+def estimate_if(tss, duration_minutes):
+    """Invert power-based cycling TSS = hours * IF² * 100."""
+    if type(tss) not in (int, float) or not math.isfinite(tss) or tss < 0:
+        raise ValueError("TSS must be finite and non-negative")
+    if type(duration_minutes) not in (int, float) or not math.isfinite(duration_minutes) or duration_minutes <= 0:
+        raise ValueError("Duration must be finite and positive")
+    result = math.sqrt(tss / (duration_minutes / 60) / 100)
+    if not math.isfinite(result):
+        raise ValueError("Estimated IF is not finite")
+    return result
+
+
 def classify(workout, rules):
     """Translate TR IF using the personal scale; retain gym and no-IF race defaults."""
     title = workout["title"]
     summary = re.split(r"\bGoals\s*:", workout.get("description", ""), maxsplit=1, flags=re.I)[0]
-    if re.search(r"\b(gym|strength|weights)\b", title, re.I):
+    declared_type = workout.get("activity_type")
+    if declared_type in ("gym", "strength", "weights") or re.search(r"\b(gym|strength|weights)\b", title, re.I):
         return {"type": "gym", "intensity": rules.get("gym", 1)}, "gym"
-    cycling = re.search(r"\b(FTP|cycling|riding|bike|ride)\b", title + " " + summary, re.I)
-    settings = {"type": "bike"} if cycling else {}
+    cycling = declared_type in ("bike", "ride") or (declared_type is None and re.search(r"\b(FTP|cycling|riding|bike|ride)\b", title + " " + summary, re.I))
+    settings = {"type": declared_type} if declared_type else {"type": "bike"} if cycling else {}
     if workout.get("intensity_factor") is not None:
         try:
             return {**settings, "intensity": intensity_from_if(workout["intensity_factor"], rules.get("if_ranges"))}, "intensity_factor"
         except ValueError:
             return settings, "invalid_intensity_factor"
+    if cycling and workout.get("tss") is not None:
+        try:
+            estimated = estimate_if(workout["tss"], workout.get("duration_minutes"))
+            return {**settings, "intensity": intensity_from_if(estimated, rules.get("if_ranges")),
+                    "estimated_if": estimated}, "tss_duration"
+        except (ValueError, OverflowError, ZeroDivisionError):
+            return settings, "invalid_tss_or_duration"
     if re.search(r"\b(race|racing|criterium|crit)\b", title, re.I):
         return {**settings, "intensity": rules.get("race", 5)}, "race_default"
     return settings, "missing_intensity_factor"
@@ -65,7 +85,10 @@ def build_plan(preview, config, schema):
     entries = []
     for workout in preview["workouts"]:
         # Title rules cover repeating workouts; UID overrides handle individual sessions.
-        inferred, classification = classify(workout, config.get("rpe", {}))
+        title_rule = config.get("titles", {}).get(workout["title"], {})
+        workout_rule = config.get("workouts", {}).get(workout["source_uid"], {})
+        declared_type = workout_rule.get("type", title_rule.get("type", workout.get("activity_type")))
+        inferred, classification = classify({**workout, "activity_type": declared_type}, config.get("rpe", {}))
         settings = {**inferred,
                     **{key: workout[source] for key, source in [("type", "activity_type"), ("intensity", "fuelin_intensity")]
                        if workout.get(source) is not None},
@@ -73,6 +96,8 @@ def build_plan(preview, config, schema):
                     **config.get("workouts", {}).get(workout["source_uid"], {})}
         entry = {"source_uid": workout["source_uid"], "title": workout["title"], "date": workout["date"],
                  "classification": classification}
+        if "estimated_if" in inferred:
+            entry["estimated_if"] = inferred["estimated_if"]
         try:
             entry["body"] = payload(workout, settings, allowed, ZoneInfo(preview["timezone"]))
             entry["status"] = "ready_for_review"

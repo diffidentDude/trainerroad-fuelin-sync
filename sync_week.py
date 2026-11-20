@@ -292,6 +292,8 @@ def main():
             body = entry.get("body", {})
             starts = workout_instant(body["startsAt"], zone).strftime("%H:%M") if body else "?"
             print(f"{item['action'].upper():7} {entry['date']} {starts} {entry['title']} (intensity {body.get('intensity', '?')}): {item['reason']}")
+            if "estimated_if" in entry:
+                print(f"  Estimated IF from TSS and duration: {entry['estimated_if']:.3f}")
             for line in item.get("details", []):
                 print("  " + line)
         print("Summary: " + ", ".join(f"{count} {action}" for action, count in sorted(Counter(item["action"] for item in actions).items())))

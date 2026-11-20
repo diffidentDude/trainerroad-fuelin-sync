@@ -2,10 +2,43 @@ import json
 import unittest
 from pathlib import Path
 
-from payloads import build_plan, payload, classify, intensity_from_if
+from payloads import build_plan, payload, classify, intensity_from_if, estimate_if
+from preview import preview as calendar_preview
+from datetime import date
 
 
 class PayloadTests(unittest.TestCase):
+    def test_tss_and_duration_estimate_cycling_if(self):
+        self.assertAlmostEqual(estimate_if(92, 55), 1.0018165319240662)
+        self.assertEqual(estimate_if(100, 60), 1)
+        self.assertEqual(estimate_if(0, 60), 0)
+        for tss, minutes in [(-1, 55), (True, 55), (92, 0), (92, -1),
+                             (float('nan'), 55), (92, float('inf')), ('92', 55)]:
+            with self.subTest(tss=tss, minutes=minutes), self.assertRaises(ValueError):
+                estimate_if(tss, minutes)
+
+    def test_tss_only_event_flows_from_calendar_to_level_five_payload(self):
+        ics = ('BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:event\nDTSTART;VALUE=DATE:20270328\n'
+               'SUMMARY:0:55 - Club event\nDESCRIPTION:TSS 92. Description: Club event\n'
+               'END:VEVENT\nEND:VCALENDAR\n')
+        source = calendar_preview(ics, date(2027, 3, 22), 'UTC')
+        schema = json.loads(Path('fuelin-schema.json').read_text())
+        entry = build_plan(source, {'titles': {'Club event': {'type': 'bike'}}}, schema)['entries'][0]
+        self.assertEqual(entry['classification'], 'tss_duration')
+        self.assertAlmostEqual(entry['estimated_if'], 1.0018165319240662)
+        self.assertEqual(entry['body']['intensity'], 5)
+        self.assertEqual(set(entry['body']), {'type', 'intensity', 'startsAt', 'endsAt'})
+
+    def test_supplied_if_wins_and_other_sports_are_not_estimated(self):
+        base = {'title': 'Event', 'tss': 92, 'duration_minutes': 55}
+        settings, source = classify({**base, 'activity_type': 'bike', 'intensity_factor': .6}, {})
+        self.assertEqual(settings['intensity'], 3)
+        self.assertEqual(source, 'intensity_factor')
+        for sport in [None, 'run', 'swim']:
+            with self.subTest(sport=sport):
+                settings, _ = classify({**base, 'activity_type': sport}, {})
+                self.assertNotIn('estimated_if', settings)
+                self.assertNotIn('intensity', settings)
     def test_default_if_bands_include_their_upper_boundary(self):
         for value, expected in [(0, 1), (.3, 1), (.300001, 2), (.5, 2), (.500001, 3),
                                 (.7, 3), (.75, 3), (.750001, 4), (.9, 4), (.900001, 5), (1, 5), (1.2, 5)]:
