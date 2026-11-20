@@ -16,7 +16,7 @@ class PayloadTests(unittest.TestCase):
                 intensity_from_if(value)
 
     def test_custom_bands_reach_planned_payload_and_overrides_still_win(self):
-        bands = [{"level": level, "max_if": upper} for level, upper in enumerate([.4, .6, .8, 1.0, None], 1)]
+        bands = [{"level": level, "min": lower, "max": upper} for level, (lower, upper) in enumerate(zip([0, .4, .6, .8, 1.0], [.4, .6, .8, 1.0, None]), 1)]
         for value, expected in [(.35, 1), (.55, 2), (.75, 3), (.95, 4), (1.1, 5)]:
             self.assertEqual(intensity_from_if(value, bands), expected)
         schema = json.loads(Path("fuelin-schema.json").read_text())

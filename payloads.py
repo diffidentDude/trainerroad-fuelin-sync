@@ -31,12 +31,13 @@ def payload(workout, settings, allowed_types, zone=None):
 
 
 def intensity_from_if(value, ranges=None):
-    """Use the first inclusive IF ceiling; the final band covers all higher IFs."""
+    """Ranges include max; shared endpoints belong to the lower level. Zero is included."""
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
         raise ValueError("IF must be a finite non-negative number")
     bands = validate_if_ranges(DEFAULT_IF_RANGES if ranges is None else ranges)
     for band in bands:
-        if band["max_if"] is None or value <= band["max_if"]:
+        lower_matches = value >= band["min"] if band["level"] == 1 else value > band["min"]
+        if lower_matches and (band["max"] is None or value <= band["max"]):
             return band["level"]
     raise ValueError("IF ranges do not cover the workout")
 

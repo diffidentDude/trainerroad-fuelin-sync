@@ -20,10 +20,12 @@ class ConfigTests(unittest.TestCase):
 
     def test_incomplete_overlapping_unordered_or_unbounded_profiles_fail(self):
         bad = [[], {}, DEFAULT_IF_RANGES[:-1]]
-        for index, field, value in [(0, "max_if", -.1), (0, "max_if", True),
-                                    (1, "max_if", .3), (1, "max_if", float('nan')),
-                                    (2, "max_if", None), (3, "max_if", float('inf')),
-                                    (4, "max_if", 1.2), (2, "level", 4), (0, "level", True)]:
+        for index, field, value in [(0, "max", -.1), (0, "max", True),
+                                    (1, "max", .3), (1, "max", float('nan')),
+                                    (2, "max", None), (3, "max", float('inf')),
+                                    (4, "max", 1.2), (2, "level", 4), (0, "level", True),
+                                    (0, "min", .1), (1, "min", .31), (1, "min", .29),
+                                    (2, "min", None), (2, "min", True), (4, "min", float("inf"))]:
             bands = deepcopy(DEFAULT_IF_RANGES)
             bands[index][field] = value
             bad.append(bands)

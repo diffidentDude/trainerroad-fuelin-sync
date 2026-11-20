@@ -13,28 +13,32 @@ class ConfigError(ValueError):
 
 
 DEFAULT_IF_RANGES = [
-    {"level": 1, "max_if": 0.30},
-    {"level": 2, "max_if": 0.50},
-    {"level": 3, "max_if": 0.75},
-    {"level": 4, "max_if": 0.90},
-    {"level": 5, "max_if": None},
+    {"level": 1, "min": 0.00, "max": 0.30},
+    {"level": 2, "min": 0.30, "max": 0.50},
+    {"level": 3, "min": 0.50, "max": 0.75},
+    {"level": 4, "min": 0.75, "max": 0.90},
+    {"level": 5, "min": 0.90, "max": None},
 ]
 
 
 def validate_if_ranges(ranges):
     if not isinstance(ranges, list) or len(ranges) != 5:
         raise ConfigError("rpe.if_ranges must contain five bands, ordered from level 1 to 5")
-    previous = -1
+    previous = 0
     for level, band in enumerate(ranges, 1):
-        if (not isinstance(band, dict) or set(band) != {"level", "max_if"}
+        if (not isinstance(band, dict) or set(band) != {"level", "min", "max"}
                 or type(band["level"]) is not int or band["level"] != level):
-            raise ConfigError("Each IF band must have level and max_if, in level order 1–5")
-        upper = band["max_if"]
+            raise ConfigError("Each IF band must have level, min and max, in level order 1–5")
+        lower, upper = band["min"], band["max"]
+        if type(lower) not in (int, float) or not math.isfinite(lower) or lower < 0:
+            raise ConfigError("IF min values must be finite and non-negative")
+        if lower != previous:
+            raise ConfigError("IF ranges must start at 0 and each min must equal the previous max (no gaps or overlaps)")
         if level == 5:
             if upper is not None:
-                raise ConfigError("Level 5 max_if must be null to cover all higher IF values")
-        elif type(upper) not in (int, float) or not math.isfinite(upper) or upper < 0 or upper <= previous:
-            raise ConfigError("IF ceilings must be finite, non-negative and strictly increasing")
+                raise ConfigError("Level 5 max must be null to cover all higher IF values")
+        elif type(upper) not in (int, float) or not math.isfinite(upper) or upper <= lower:
+            raise ConfigError("Each finite IF max must be greater than its min")
         else:
             previous = upper
     return ranges
