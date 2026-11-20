@@ -6,6 +6,19 @@ from payloads import build_plan, payload, classify, intensity_from_if
 
 
 class PayloadTests(unittest.TestCase):
+    def test_configured_level_three_ceiling_is_inclusive(self):
+        for value, expected in [(.49, 2), (.5, 3), (.7, 3), (.75, 3),
+                                (.750001, 4), (.85, 4), (.899999, 4), (.9, 5), (1, 5)]:
+            with self.subTest(value=value):
+                self.assertEqual(intensity_from_if(value, level_3_max=.75), expected)
+
+    def test_level_three_ceiling_reaches_planned_payload(self):
+        schema = json.loads(Path("fuelin-schema.json").read_text())
+        workout = {**self.workout, "intensity_factor": .75}
+        result = build_plan({"timezone": "UTC", "workouts": [workout]},
+                            {"rpe": {"if_level_3_max": .75}}, schema)
+        self.assertEqual(result["entries"][0]["body"]["intensity"], 3)
+
     def test_linear_if_mapping(self):
         for value, expected in [(0, 1), (.2, 1), (.4, 2), (.6, 3), (.69, 3),
                                 (.7, 4), (.71, 4), (.8, 4), (.85, 4), (.86, 4),

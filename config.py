@@ -1,5 +1,6 @@
 """Load user preferences from an ignored local file."""
 import json
+import math
 import re
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -9,6 +10,13 @@ DEFAULT_START_TIMES = {"weekday": "09:00", "weekend": "09:00", "gym": "09:00"}
 
 class ConfigError(ValueError):
     pass
+
+
+def validate_if_level_3_max(value):
+    if (type(value) not in (int, float) or not math.isfinite(value)
+            or not 0.5 <= value < 0.9):
+        raise ConfigError("rpe.if_level_3_max must be a decimal IF from 0.50 up to (but not including) 0.90")
+    return value
 
 
 def load_config(path=Path("config.json")):
@@ -36,6 +44,8 @@ def load_config(path=Path("config.json")):
     for key in ("rpe", "titles", "workouts"):
         if not isinstance(rules.get(key, {}), dict):
             raise ConfigError(f"{key} must be an object")
+    if "if_level_3_max" in rules.get("rpe", {}):
+        validate_if_level_3_max(rules["rpe"]["if_level_3_max"])
     for key in ("titles", "workouts"):
         if any(not isinstance(value, dict) for value in rules.get(key, {}).values()):
             raise ConfigError(f"Each {key} entry must be an object")

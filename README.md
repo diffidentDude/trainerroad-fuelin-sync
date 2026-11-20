@@ -49,6 +49,7 @@ Manage saved authentication with `python3 auth.py status` or `python3 auth.py lo
 
 - Missing calendar start times use your configured weekday, weekend or gym time. Explicit TrainerRoad times take precedence. Gym detection uses standard gym/strength/weights words or a title override with one of those activity types.
 - Cycling intensity: **IF × 5**, rounded to the nearest integer (halves up), capped at 1–5. Gym defaults to **1**; races without IF default to **5**. This is a chosen conversion, not a validated RPE equivalence.
+- Optionally set `rpe.if_level_3_max` in your local config to change the inclusive ceiling for intensity 3. For example, `0.75` keeps IF 0.50–0.75 at 3, values above 0.75 and below 0.90 at 4, and IF 0.90+ at 5. Other boundaries and explicit workout overrides remain unchanged. Omit it to use the linear mapping.
 - Duration comes from the calendar title or structured ICS fields. `config.json` provides title-specific type/intensity overrides, duration fallbacks and recognised annotations. A duration fallback cannot detect a change absent from the feed.
 - Keep recurring strength sessions in TrainerRoad only; the sync creates individual Fuelin activities.
 

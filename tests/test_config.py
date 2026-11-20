@@ -21,6 +21,12 @@ class ConfigTests(unittest.TestCase):
 
     def test_invalid_times_timezone_and_rule_shapes_fail_early(self):
         invalid = [
+            {"rpe": {"if_level_3_max": 75}},
+            {"rpe": {"if_level_3_max": True}},
+            {"rpe": {"if_level_3_max": .49}},
+            {"rpe": {"if_level_3_max": .9}},
+            {"rpe": {"if_level_3_max": "0.75"}},
+            {"rpe": {"if_level_3_max": float("nan")}},
             {"start_times": {"weekday": "25:00"}},
             {"start_times": {"weekday": "6:00"}},
             {"start_times": {"weekdays": "09:00"}},

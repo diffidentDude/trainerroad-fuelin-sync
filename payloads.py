@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from config import load_config
+from config import load_config, validate_if_level_3_max
 
 
 def payload(workout, settings, allowed_types, zone=None):
@@ -31,10 +31,15 @@ def payload(workout, settings, allowed_types, zone=None):
             "endsAt": ends.replace(tzinfo=None).isoformat()}
 
 
-def intensity_from_if(value):
-    """Personal linear scale: IF * 5, nearest integer, halves up, clamped 1–5."""
+def intensity_from_if(value, level_3_max=None):
+    """Linear scale with an optional inclusive ceiling for level 3."""
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
         raise ValueError("IF must be a finite non-negative number")
+    if level_3_max is not None:
+        validate_if_level_3_max(level_3_max)
+        # Only adjust the boundary between 3 and 4; preserve levels 1, 2 and 5.
+        if 0.5 <= value < 0.9:
+            return 3 if value <= level_3_max else 4
     scaled = (Decimal(str(value)) * 5).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
     return max(1, min(5, int(scaled)))
 
@@ -49,7 +54,7 @@ def classify(workout, rules):
     settings = {"type": "bike"} if cycling else {}
     if workout.get("intensity_factor") is not None:
         try:
-            return {**settings, "intensity": intensity_from_if(workout["intensity_factor"])}, "intensity_factor"
+            return {**settings, "intensity": intensity_from_if(workout["intensity_factor"], rules.get("if_level_3_max"))}, "intensity_factor"
         except ValueError:
             return settings, "invalid_intensity_factor"
     if re.search(r"\b(race|racing|criterium|crit)\b", title, re.I):
