@@ -33,6 +33,8 @@ def load_config(path=Path("config.json")):
         ZoneInfo(rules.get("timezone", "UTC"))
     except (ZoneInfoNotFoundError, TypeError, ValueError):
         raise ConfigError("Config timezone must be a valid IANA timezone") from None
+    if rules.get("rest_day_action", "review") not in ("review", "delete_all_planned", "delete_cycling"):
+        raise ConfigError("rest_day_action must be review, delete_all_planned or delete_cycling")
     times = rules.get("start_times", {})
     if not isinstance(times, dict):
         raise ConfigError("start_times must be an object")

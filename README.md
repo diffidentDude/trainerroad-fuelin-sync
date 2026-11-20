@@ -52,12 +52,13 @@ Manage saved authentication with `python3 auth.py status` or `python3 auth.py lo
 - Optionally set `rpe.if_level_3_max` in your local config to change the inclusive ceiling for intensity 3. For example, `0.75` keeps IF 0.50–0.75 at 3, values above 0.75 and below 0.90 at 4, and IF 0.90+ at 5. Other boundaries and explicit workout overrides remain unchanged. Omit it to use the linear mapping.
 - Duration comes from the calendar title or structured ICS fields. `config.json` provides title-specific type/intensity overrides, duration fallbacks and recognised annotations. A duration fallback cannot detect a change absent from the feed.
 - Keep recurring strength sessions in TrainerRoad only; the sync creates individual Fuelin activities.
+- A duration-less `Rest Day` marker means no training is planned on that date. Set `rest_day_action` in your local config to `delete_all_planned` to remove all uncompleted Fuelin workouts for that date, including strength. Completed workouts are kept. The alternatives are `delete_cycling` or `review` (the default). Rest-day reads and planned deletions appear in the preview; deletions require `--apply` and have no post-write verification. Other non-workout titles can be listed in `annotations`. Unknown entries on open Fuelin dates block writes for review.
 
 ## Limitations
 
 - **Rapid or concurrent runs can create duplicates.** Fuelin may take time to expose a submitted workout. If you run the sync three times before those writes become visible, each run may see the same empty state and submit the workout again. Wait until the activities appear in Fuelin before rerunning. The tool has no local history, idempotency guarantee, polling or write retries.
 - A timeout or failed request can still have reached Fuelin. Check the app before repeating a run; earlier requests in that run may already have succeeded.
-- Matching uses date, sport and times, not persistent TrainerRoad-to-Fuelin IDs. Ambiguous matches and completed or recurring activities requiring changes are flagged for review. Cross-date moves, or changing both sport and time, may leave an old activity unmatched; resolve those manually. Deletions and automatic scheduling are not implemented.
+- Matching uses date, sport and times, not persistent TrainerRoad-to-Fuelin IDs. Ambiguous matches and completed or recurring activities requiring changes are flagged for review. Cross-date moves, or changing both sport and time, may leave an old activity unmatched; resolve those manually. Workouts removed from TrainerRoad without an explicit Rest Day marker are not automatically deleted. Automatic scheduling is not implemented.
 - Fuelin may display generic workout names because its create endpoint does not accept a name.
 
 Legacy `sync-state.sqlite3` files are no longer read or written and can be deleted. Authentication tokens still persist in macOS Keychain; workout state does not.

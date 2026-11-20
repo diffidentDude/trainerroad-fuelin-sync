@@ -27,6 +27,7 @@ class FuelinClient:
         self.opener = build_opener(NoRedirect(), HTTPCookieProcessor(http.cookiejar.CookieJar()))
         self.token = None
         self.user_id = None
+        self.workout_write_attempted = False
 
     def request(self, method, path, body=None):
         headers = {"Accept": "application/json", "User-Agent": "TrainerRoad-Fuelin-Personal-Sync/0.1"}
@@ -38,8 +39,11 @@ class FuelinClient:
             headers["Content-Type"] = "application/json"
         request = Request("https://prod.fuelin.io/core" + path, method=method, headers=headers,
                           data=json.dumps(body).encode() if body is not None else None)
+        if method in ("POST", "PATCH", "DELETE") and "/workouts" in path:
+            self.workout_write_attempted = True
         with self.opener.open(request, timeout=30) as response:
-            return json.loads(response.read(2_000_000))
+            raw = response.read(2_000_000)
+            return json.loads(raw) if raw else None
 
     def login(self, refresh=False, store=None):
         store = store if store is not None else KeychainStore()

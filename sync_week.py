@@ -16,6 +16,8 @@ from payloads import build_plan
 from config import load_config, ConfigError
 from preview import preview, read_calendar
 
+NON_WORKOUT_TITLES = {"rest day"}
+
 
 def week_start(selection, today):
     monday = today - timedelta(days=today.weekday())
@@ -57,9 +59,10 @@ def available_dates(client, first, last, page_size=100):
         offset += len(page)
 
 
-def plan_week(client, entries, zone, now):
+def plan_week(client, entries, zone, now, rest_dates=None, rest_day_action="review"):
     """Read all relevant days before planning any writes."""
-    days = sorted({entry["date"] for entry in entries})
+    rest_dates = set(rest_dates or [])
+    days = sorted({entry["date"] for entry in entries} | rest_dates)
     existing = {}
     for day in days:
         try:
@@ -89,6 +92,8 @@ def plan_week(client, entries, zone, now):
         body = entry.get("body")
         if entry["status"] != "ready_for_review":
             reason = entry.get("reason", "Unresolved workout")
+        elif entry["date"] in rest_dates:
+            reason = "TrainerRoad contains both a Rest Day marker and a workout on this date; requires review"
         elif workout_instant(body["startsAt"], zone) <= now:
             action, reason = "past", "Already started; left unchanged"
         else:
@@ -155,6 +160,22 @@ def plan_week(client, entries, zone, now):
             if other["action"] in ("create", "update") and other["entry"]["date"] == item["entry"]["date"] and conflicting_workout(other["entry"]["body"], item["entry"]["body"], zone):
                 item["action"] = other["action"] = "review"
                 item["reason"] = other["reason"] = "Source sessions overlap; check start-time rules"
+    for day in sorted(rest_dates):
+        if day < now.date().isoformat() or any(entry["date"] == day for entry in entries):
+            continue
+        for value in existing[day]:
+            if value.get("isCompleted") is True or value.get("completedStartsAt") or value.get("completedSource"):
+                continue
+            if rest_day_action == "delete_cycling" and activity_family(value.get("type")) != "bike":
+                continue
+            delete = rest_day_action in ("delete_all_planned", "delete_cycling")
+            result.append({
+                "entry": {"date": day, "title": "Rest Day", "body": {}},
+                "action": "delete" if delete else "review",
+                "reason": "Remove uncompleted activity for TrainerRoad rest day" if delete else "Rest Day conflicts with an uncompleted Fuelin activity; choose rest_day_action in config",
+                "fuelin_id": value.get("id"),
+                "details": comparison_details(value, value, zone),
+            })
     return result
 
 
@@ -162,12 +183,12 @@ def execute_week(client, actions, zone):
     if any(item["action"] == "review" for item in actions):
         raise SyncError("Resolve the review items first. No sync writes attempted")
     for item in actions:
-        if item["action"] == "update":
+        if item["action"] in ("update", "delete"):
             try:
                 UUID(item["fuelin_id"])
             except (KeyError, TypeError, ValueError, AttributeError):
                 raise SyncError("A matching Fuelin activity has no valid ID; no sync writes attempted") from None
-    counts = {"submitted": 0, "updated": 0, "matched": 0}
+    counts = {"submitted": 0, "updated": 0, "deleted": 0, "matched": 0}
     for item in actions:
         entry = item["entry"]
         if item["action"] == "matched":
@@ -182,6 +203,13 @@ def execute_week(client, actions, zone):
                 raise SyncError("Fuelin reported an update error")
             counts["updated"] += 1
             print(f"Update submitted: {entry['date']} {entry['title']}")
+        elif item["action"] == "delete":
+            uid = str(UUID(item["fuelin_id"]))
+            response = client.request("DELETE", f"/api/v1/users/{client.user_id}/days/{entry['date']}/workouts/{uid}")
+            if isinstance(response, dict) and (response.get("success") is False or (type(response.get("status")) in (int, float) and response["status"] >= 400)):
+                raise SyncError("Fuelin reported a rest-day deletion error")
+            counts["deleted"] += 1
+            print(f"Rest-day deletion submitted: {entry['date']}")
         elif item["action"] == "create":
             if workout_instant(entry["body"]["startsAt"], zone) <= datetime.now(zone):
                 raise SyncError("A workout has started since planning; stopped without creating it")
@@ -197,11 +225,12 @@ def main():
     parser.add_argument("--file", type=Path, help="Use an explicit ICS file instead of fetching the calendar URL")
     parser.add_argument("--timezone", help="Override the configured timezone")
     parser.add_argument("--config", type=Path, default=Path("config.json"))
-    parser.add_argument("--apply", action="store_true", help="Create missing sessions and update matching activities to TrainerRoad values")
+    parser.add_argument("--apply", action="store_true", help="Create/update workouts and apply the configured rest-day policy")
     parser.add_argument("--keep-manual-gym", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.keep_manual_gym:
         print("--keep-manual-gym is obsolete: existing activities now follow TrainerRoad values.")
+    client = None
     try:
         rules = load_config(args.config)
         args.timezone = args.timezone or rules.get("timezone", "UTC")
@@ -216,29 +245,33 @@ def main():
         if sunday is not None:
             source["workouts"] = [workout for workout in source["workouts"] if str(monday) <= workout["date"] <= str(sunday)]
         skipped = [event for event in source["skipped_events"] if sunday is None or str(monday) <= event["date"] <= str(sunday)]
-        annotation_titles = {title.casefold().strip() for title in rules.get("annotations", [])}
-        annotations = [event for event in skipped if event["title"].casefold().strip() in annotation_titles]
+        rest_dates = {event["date"] for event in skipped if event["title"].casefold().strip() == "rest day"}
+        annotation_titles = NON_WORKOUT_TITLES | {title.casefold().strip() for title in rules.get("annotations", [])}
+        annotations = [event for event in skipped if event["title"].casefold().strip() in annotation_titles and event["title"].casefold().strip() != "rest day"]
         skipped = [event for event in skipped if event["title"].casefold().strip() not in annotation_titles]
         plan = build_plan(source, rules, json.loads(Path("fuelin-schema.json").read_text()))
         scope = f"Week: {monday} to {sunday}" if sunday else f"All planned workouts from {monday} in the calendar feed"
         print(f"{scope} ({args.timezone}); {len(plan['entries'])} source workouts")
         if annotations:
-            print(f"Ignored {len(annotations)} recognised training-phase annotations (not workouts).")
+            print(f"Ignored {len(annotations)} recognised non-workout annotations.")
+        if rest_dates:
+            print(f"TrainerRoad Rest Day markers: {', '.join(sorted(rest_dates))}")
         for workout in source["workouts"]:
             if workout.get("duration_source") == "configured_override":
                 print(f"Duration override: {workout['date']} {workout['title']} = {workout['duration_minutes']} minutes (no title prefix)")
-        if not plan["entries"]:
+        if not plan["entries"] and not rest_dates:
             print("No future source workouts in the selected range. No Fuelin activities changed.")
             return 0
         client = FuelinClient()
         user = client.login()
         if user.get("timezone") and user["timezone"] != args.timezone:
             raise SyncError("Fuelin timezone differs from the calendar timezone")
-        target_dates = sorted({entry["date"] for entry in plan["entries"]})
+        target_dates = sorted({entry["date"] for entry in plan["entries"]} | rest_dates)
         open_dates = available_dates(client, target_dates[0], target_dates[-1])
         deferred = sum(entry["date"] not in open_dates for entry in plan["entries"])
         plan["entries"] = [entry for entry in plan["entries"] if entry["date"] in open_dates]
         skipped = [event for event in skipped if event["date"] in open_dates]
+        rest_dates &= open_dates
         if open_dates:
             print(f"Fuelin available dates: {min(open_dates)} to {max(open_dates)}; {len(plan['entries'])} eligible workouts, {deferred} deferred until their days open.")
         else:
@@ -248,11 +281,12 @@ def main():
             print(f"{len(skipped)} available-date calendar entries have no recognised duration.")
             for event in skipped:
                 print(f"SKIPPED {event['date']} {event['title']!r}: {event['reason']}")
-        if not plan["entries"]:
+        if not plan["entries"] and not rest_dates:
             print("No workouts are eligible yet. Run again when Fuelin opens their dates.")
             return 0
-        print(f"Reading Fuelin state for {len(set(entry['date'] for entry in plan['entries']))} training dates before sending any requests...")
-        actions = plan_week(client, plan["entries"], zone, now)
+        print(f"Reading Fuelin state for {len({entry['date'] for entry in plan['entries']} | rest_dates)} training dates before sending any requests...")
+        actions = plan_week(client, plan["entries"], zone, now, rest_dates, rules.get("rest_day_action", "review"))
+        print("Planned actions (no writes sent yet):")
         for item in actions:
             entry = item["entry"]
             body = entry.get("body", {})
@@ -267,7 +301,7 @@ def main():
         if skipped:
             raise SyncError("Unrecognised calendar entries need review; no sync writes attempted")
         counts = execute_week(client, actions, zone)
-        print(f"Sync run: {counts['submitted']} create requests submitted, {counts['updated']} update requests submitted, {counts['matched']} already matching. No post-write reads or retries.")
+        print(f"Sync run: {counts['submitted']} create requests submitted, {counts['updated']} update requests submitted, {counts['deleted']} rest-day deletions submitted, {counts['matched']} already matching. No post-write reads or retries.")
         return 0
     except (StorageError, SyncError, ConfigError) as error:
         print(str(error))
@@ -275,7 +309,10 @@ def main():
         print(f"Fuelin request returned HTTP {error.code}; stopped without retrying writes.")
     except Exception:
         print("Sync stopped. Check the calendar URL/file, connection and configuration. Private response details were not printed.")
-    print("No automatic write retries. A failed request may still have reached Fuelin; check the app before rerunning.")
+    if getattr(client, "workout_write_attempted", False) is True:
+        print("No automatic write retries. A failed request may still have reached Fuelin; check the app before rerunning.")
+    else:
+        print("No Fuelin workout writes were attempted.")
     return 1
 
 

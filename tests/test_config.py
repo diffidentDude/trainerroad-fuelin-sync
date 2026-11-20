@@ -21,6 +21,7 @@ class ConfigTests(unittest.TestCase):
 
     def test_invalid_times_timezone_and_rule_shapes_fail_early(self):
         invalid = [
+            {"rest_day_action": "delete_everything"},
             {"rpe": {"if_level_3_max": 75}},
             {"rpe": {"if_level_3_max": True}},
             {"rpe": {"if_level_3_max": .49}},
